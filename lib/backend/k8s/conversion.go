@@ -162,7 +162,6 @@ func (c converter) podToWorkloadEndpoint(pod *k8sapi.Pod) (*model.KVPair, error)
 	// Treat this as if it didn't exist.
 	ipNets := []cnet.IPNet{}
 	if c.hasIPAddress(pod) {
-
 		// Parse the Pod's IP address.
 		_, ipNet, err := cnet.ParseCIDR(fmt.Sprintf("%s/32", pod.Status.PodIP))
 		if err != nil {
@@ -206,14 +205,14 @@ func (c converter) podToWorkloadEndpoint(pod *k8sapi.Pod) (*model.KVPair, error)
 
 // networkPolicyToPolicy converts a k8s NetworkPolicy to a model.KVPair.
 func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.KVPair, error) {
-	// Parse out important fields.
+	// Pull out important fields.
 	policyName := fmt.Sprintf("%s.%s", np.ObjectMeta.Namespace, np.ObjectMeta.Name)
 	order := float64(1000.0)
 
 	// Generate the inbound rules list.
 	inboundRules := []model.Rule{}
 	for _, r := range np.Spec.Ingress {
-		inboundRules = append(inboundRules, c.parseIngressRule(r, np.ObjectMeta.Namespace)...)
+		inboundRules = append(inboundRules, c.k8sIngressRuleToCalico(r, np.ObjectMeta.Namespace)...)
 	}
 
 	// Build and return the KVPair.
@@ -223,7 +222,7 @@ func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.K
 		},
 		Value: &model.Policy{
 			Order:         &order,
-			Selector:      c.parseSelector(&np.Spec.PodSelector, &np.ObjectMeta.Namespace),
+			Selector:      c.k8sSelectorToCalico(&np.Spec.PodSelector, &np.ObjectMeta.Namespace),
 			InboundRules:  inboundRules,
 			OutboundRules: []model.Rule{},
 		},
@@ -231,9 +230,9 @@ func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.K
 	}, nil
 }
 
-// parseSelector takes a namespaced k8s label selector and returns the Calico
+// k8sSelectorToCalico takes a namespaced k8s label selector and returns the Calico
 // equivalent.
-func (c converter) parseSelector(s *unversioned.LabelSelector, ns *string) string {
+func (c converter) k8sSelectorToCalico(s *unversioned.LabelSelector, ns *string) string {
 	// If this is a podSelector, it needs to be namespaced, and it
 	// uses a different prefix.  Otherwise, treat this as a NamespaceSelector.
 	selectors := []string{}
@@ -251,14 +250,14 @@ func (c converter) parseSelector(s *unversioned.LabelSelector, ns *string) strin
 
 	// matchExpressions is a list of in/notin/exists/doesnotexist tests.
 	for _, e := range s.MatchExpressions {
-		valueList := strings.Join(e.Values, ", ")
+		valueList := strings.Join(e.Values, "', '")
 
 		// Each selector is formatted differently based on the operator.
 		switch e.Operator {
 		case unversioned.LabelSelectorOpIn:
-			selectors = append(selectors, fmt.Sprintf("%s%s in { %s }", prefix, e.Key, valueList))
+			selectors = append(selectors, fmt.Sprintf("%s%s in { '%s' }", prefix, e.Key, valueList))
 		case unversioned.LabelSelectorOpNotIn:
-			selectors = append(selectors, fmt.Sprintf("%s%s no int { %s }", prefix, e.Key, valueList))
+			selectors = append(selectors, fmt.Sprintf("%s%s not in { '%s' }", prefix, e.Key, valueList))
 		case unversioned.LabelSelectorOpExists:
 			selectors = append(selectors, fmt.Sprintf("has(%s%s)", prefix, e.Key))
 		case unversioned.LabelSelectorOpDoesNotExist:
@@ -269,7 +268,7 @@ func (c converter) parseSelector(s *unversioned.LabelSelector, ns *string) strin
 	return strings.Join(selectors, " && ")
 }
 
-func (c converter) parseIngressRule(r extensions.NetworkPolicyIngressRule, ns string) []model.Rule {
+func (c converter) k8sIngressRuleToCalico(r extensions.NetworkPolicyIngressRule, ns string) []model.Rule {
 	rules := []model.Rule{}
 	peers := []*extensions.NetworkPolicyPeer{}
 	ports := []*extensions.NetworkPolicyPort{}
@@ -306,12 +305,12 @@ func (c converter) buildRule(port *extensions.NetworkPolicyPort, peer *extension
 	srcSelector := ""
 	if port != nil {
 		// Port information available.
-		protocol = c.parseProtocol(port.Protocol)
-		dstPorts = c.parsePolicyPort(*port)
+		protocol = c.k8sProtocolToCalico(port.Protocol)
+		dstPorts = c.k8sPortToCalico(*port)
 	}
 	if peer != nil {
 		// Peer information available.
-		srcSelector = c.parsePolicyPeer(*peer, ns)
+		srcSelector = c.k8sPeerToCalicoSelector(*peer, ns)
 	}
 
 	// Build the rule.
@@ -323,7 +322,7 @@ func (c converter) buildRule(port *extensions.NetworkPolicyPort, peer *extension
 	}
 }
 
-func (c converter) parseProtocol(protocol *k8sapi.Protocol) *numorstring.Protocol {
+func (c converter) k8sProtocolToCalico(protocol *k8sapi.Protocol) *numorstring.Protocol {
 	if protocol != nil {
 		p := numorstring.ProtocolFromString(strings.ToLower(string(*protocol)))
 		return &p
@@ -331,21 +330,21 @@ func (c converter) parseProtocol(protocol *k8sapi.Protocol) *numorstring.Protoco
 	return nil
 }
 
-func (c converter) parsePolicyPeer(peer extensions.NetworkPolicyPeer, ns string) string {
+func (c converter) k8sPeerToCalicoSelector(peer extensions.NetworkPolicyPeer, ns string) string {
 	// Determine the source selector for the rule.
 	// Only one of PodSelector / NamespaceSelector can be defined.
 	if peer.PodSelector != nil {
-		return c.parseSelector(peer.PodSelector, &ns)
+		return c.k8sSelectorToCalico(peer.PodSelector, &ns)
 	}
 	if peer.NamespaceSelector != nil {
-		return c.parseSelector(peer.NamespaceSelector, nil)
+		return c.k8sSelectorToCalico(peer.NamespaceSelector, nil)
 	}
 
 	// Neither is defined - return an empty selector.
 	return ""
 }
 
-func (c converter) parsePolicyPort(port extensions.NetworkPolicyPort) []numorstring.Port {
+func (c converter) k8sPortToCalico(port extensions.NetworkPolicyPort) []numorstring.Port {
 	if port.Port != nil {
 		p, err := numorstring.PortFromString(port.Port.String())
 		if err != nil {
