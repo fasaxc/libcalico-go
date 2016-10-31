@@ -138,19 +138,16 @@ func ToTagsLabelsRules(d *model.KVPair) (t, l, r *model.KVPair) {
 	pk := d.Key.(model.ProfileKey)
 
 	t = &model.KVPair{
-		Key:      model.ProfileTagsKey{pk},
-		Value:    p.Tags,
-		Revision: d.Revision,
+		Key:   model.ProfileTagsKey{pk},
+		Value: p.Tags,
 	}
 	l = &model.KVPair{
-		Key:      model.ProfileLabelsKey{pk},
-		Value:    p.Labels,
-		Revision: d.Revision,
+		Key:   model.ProfileLabelsKey{pk},
+		Value: p.Labels,
 	}
 	r = &model.KVPair{
-		Key:      model.ProfileRulesKey{pk},
-		Value:    &p.Rules,
-		Revision: d.Revision,
+		Key:   model.ProfileRulesKey{pk},
+		Value: &p.Rules,
 	}
 
 	// Fix up tags and labels so to be empty values rather than nil.  Felix does not

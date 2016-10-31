@@ -189,6 +189,10 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update
 				panic(err)
 			}
 			rules, tags, labels := compat.ToTagsLabelsRules(profile)
+			rules.Revision = profile.Revision
+			tags.Revision = profile.Revision
+			labels.Revision = profile.Revision
+
 			snap = append(snap,
 				api.Update{KVPair: *rules, UpdateType: api.UpdateTypeKVNew},
 				api.Update{KVPair: *tags, UpdateType: api.UpdateTypeKVNew},
@@ -425,6 +429,9 @@ func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
 		panic(err)
 	}
 	rules, tags, labels := compat.ToTagsLabelsRules(profile)
+	rules.Revision = profile.Revision
+	tags.Revision = profile.Revision
+	labels.Revision = profile.Revision
 
 	// If this is the kube-system Namespace, it also houses Pool
 	// information, so send a pool update. FIXME: Make this better.
