@@ -1,5 +1,5 @@
-// Copyright (c) 2016 projectcalico, Inc. All rights reserved.
-
+// Copyright (c) 2016 Tigera, Inc. All rights reserved.
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -507,7 +507,7 @@ func (c ipams) assignFromExistingBlock(
 // If an empty string is passed as the host, then the value of os.Hostname is used.
 func (c ipams) ClaimAffinity(cidr net.IPNet, host string) ([]net.IPNet, []net.IPNet, error) {
 	// Validate that the given CIDR is at least as big as a block.
-	if !largerThanBlock(cidr) {
+	if !largerThanOrEqualToBlock(cidr) {
 		estr := fmt.Sprintf("The requested CIDR (%s) is smaller than the minimum.", cidr.String())
 		return nil, nil, invalidSizeError(estr)
 	}
@@ -556,7 +556,7 @@ func (c ipams) ClaimAffinity(cidr net.IPNet, host string) ([]net.IPNet, []net.IP
 // If an empty string is passed as the host, then the value of os.Hostname is used.
 func (c ipams) ReleaseAffinity(cidr net.IPNet, host string) error {
 	// Validate that the given CIDR is at least as big as a block.
-	if !largerThanBlock(cidr) {
+	if !largerThanOrEqualToBlock(cidr) {
 		estr := fmt.Sprintf("The requested CIDR (%s) is smaller than the minimum.", cidr.String())
 		return invalidSizeError(estr)
 	}
