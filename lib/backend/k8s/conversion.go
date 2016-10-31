@@ -146,6 +146,12 @@ func (c converter) namespaceToProfile(ns *k8sapi.Namespace) (*model.KVPair, erro
 	return &kvp, nil
 }
 
+// isCalicoPod returns true if the pod should be shown as a workloadEndpoint
+// in the Calico API and false otherwise.
+func (c converter) isCalicoPod(pod *k8sapi.Pod) bool {
+	return !c.isHostNetworked(pod) && c.hasIPAddress(pod)
+}
+
 func (c converter) isHostNetworked(pod *k8sapi.Pod) bool {
 	return pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.HostNetwork == true
 }

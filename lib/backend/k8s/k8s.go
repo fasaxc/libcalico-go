@@ -42,7 +42,6 @@ type KubeConfig struct {
 }
 
 func NewKubeClient(kc *KubeConfig) (*KubeClient, error) {
-
 	// Use the kubernetes client code to load the kubeconfig file and combine it with the overrides.
 	log.Infof("Building client for config: %+v", kc)
 	configOverrides := &clientcmd.ConfigOverrides{}
@@ -70,7 +69,7 @@ func NewKubeClient(kc *KubeConfig) (*KubeClient, error) {
 	log.Infof("Config overrides: %+v", configOverrides)
 
 	// A kubeconfig file was provided.  Use it to load a config, passing through
-	// and overrides.
+	// any overrides.
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		&loadingRules, configOverrides).ClientConfig()
 	if err != nil {
@@ -108,8 +107,6 @@ func (c *KubeClient) Update(d *model.KVPair) (*model.KVPair, error) {
 // Set an existing entry in the datastore.  This ignores whether an entry already
 // exists.
 func (c *KubeClient) Apply(d *model.KVPair) (*model.KVPair, error) {
-	// This is a noop.  Calico components shouldn't be modifying
-	// k8s resources.
 	switch d.Key.(type) {
 	case model.PoolKey:
 		return c.applyPool(d)
@@ -175,7 +172,7 @@ func (c *KubeClient) listProfiles(l model.ProfileListOptions) ([]*model.KVPair, 
 	if l.Name != "" {
 		kvp, err := c.getProfile(model.ProfileKey{Name: l.Name})
 		if err != nil {
-			return nil, err
+			return []*model.KVPair{}, nil
 		}
 		return []*model.KVPair{kvp}, nil
 	}
@@ -245,7 +242,7 @@ func (c *KubeClient) listWorkloadEndpoints(l model.WorkloadEndpointListOptions) 
 	ret := []*model.KVPair{}
 	for _, pod := range pods.Items {
 		// Decide if this pod should be displayed.
-		if c.converter.isHostNetworked(&pod) || !c.converter.hasIPAddress(&pod) {
+		if !c.converter.isCalicoPod(&pod) {
 			continue
 		}
 
@@ -270,7 +267,7 @@ func (c *KubeClient) getWorkloadEndpoint(k model.WorkloadEndpointKey) (*model.KV
 	}
 
 	// Decide if this pod should be displayed.
-	if c.converter.isHostNetworked(pod) || !c.converter.hasIPAddress(pod) {
+	if !c.converter.isCalicoPod(pod) {
 		return nil, nil
 	}
 	return c.converter.podToWorkloadEndpoint(pod)
@@ -281,7 +278,7 @@ func (c *KubeClient) listPools(l model.PoolListOptions) ([]*model.KVPair, error)
 	// Kubernetes backend only supports a single pool.
 	kvp, err := c.getPool(model.PoolKey{})
 	if err != nil {
-		return nil, err
+		return []*model.KVPair{}, nil
 	}
 	return []*model.KVPair{kvp}, nil
 }
@@ -330,7 +327,7 @@ func (c *KubeClient) listPolicies(l model.PolicyListOptions) ([]*model.KVPair, e
 		// Exact lookup on a NetworkPolicy.
 		kvp, err := c.getPolicy(model.PolicyKey{Name: l.Name})
 		if err != nil {
-			return nil, err
+			return []*model.KVPair{}, nil
 		}
 		return []*model.KVPair{kvp}, nil
 	}
@@ -368,12 +365,6 @@ func (c *KubeClient) getPolicy(k model.PolicyKey) (*model.KVPair, error) {
 }
 
 func (c *KubeClient) getReadyStatus(k model.ReadyFlagKey) (*model.KVPair, error) {
-	// See if we can connect to Kubernetes.
-	_, err := c.clientSet.Namespaces().List(k8sapi.ListOptions{})
-	if err != nil {
-		return &model.KVPair{Key: k, Value: false}, nil
-	}
-
 	return &model.KVPair{Key: k, Value: true}, nil
 }
 
