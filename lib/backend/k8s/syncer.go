@@ -15,7 +15,6 @@
 package k8s
 
 import (
-	"fmt"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -108,13 +107,13 @@ func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]api.Update, watchUpd
 		case updates = <-snapshotUpdates:
 			log.Debugf("Snapshot update: %+v", updates)
 			if currentStatus != api.ResyncInProgress {
-				panic("Recieved snapshot update while not resyncing")
+				log.Panic("Recieved snapshot update while not resyncing")
 			}
 			syn.callbacks.OnUpdates(*updates)
 		case update = <-watchUpdates:
 			log.Debugf("Watch update: %+v", update)
 			if currentStatus != api.InSync {
-				panic("Recieved watch update while not in sync")
+				log.Panic("Recieved watch update while not in sync")
 			}
 			syn.callbacks.OnUpdates([]api.Update{*update})
 		case newStatus = <-statusUpdates:
@@ -186,7 +185,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update
 			// components - rules, tags, labels.
 			profile, err := syn.kc.converter.namespaceToProfile(&ns)
 			if err != nil {
-				panic(err)
+				log.Panicf("%s", err)
 			}
 			rules, tags, labels := compat.ToTagsLabelsRules(profile)
 			rules.Revision = profile.Revision
@@ -284,17 +283,17 @@ func (syn *kubeSyncer) watchKubeAPI(updateChan chan *api.Update,
 	opts := k8sapi.ListOptions{ResourceVersion: initialVersions.namespaceVersion}
 	nsWatch, err := syn.kc.clientSet.Namespaces().Watch(opts)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 	opts = k8sapi.ListOptions{ResourceVersion: initialVersions.podVersion}
 	poWatch, err := syn.kc.clientSet.Pods("").Watch(opts)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 	opts = k8sapi.ListOptions{ResourceVersion: initialVersions.networkPolicyVersion}
 	npWatch, err := syn.kc.clientSet.NetworkPolicies("").Watch(opts)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 
 	// Keep track of the latest resource versions.
@@ -420,13 +419,13 @@ func (syn *kubeSyncer) eventTriggersResync(e watch.Event) bool {
 func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
 	ns, ok := e.Object.(*k8sapi.Namespace)
 	if !ok {
-		panic(fmt.Sprintf("Invalid namespace event: %+v", e.Object))
+		log.Panicf("Invalid namespace event: %+v", e.Object)
 	}
 
 	// Convert the received Namespace into a profile KVPair.
 	profile, err := syn.kc.converter.namespaceToProfile(ns)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 	rules, tags, labels := compat.ToTagsLabelsRules(profile)
 	rules.Revision = profile.Revision
@@ -439,7 +438,7 @@ func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
 	if ns.ObjectMeta.Name == "kube-system" {
 		pool, err = syn.kc.converter.namespaceToPool(ns)
 		if err != nil {
-			panic(err)
+			log.Panicf("%s", err)
 		}
 	}
 
@@ -472,7 +471,7 @@ var labelCache map[string]map[string]string = map[string]map[string]string{}
 func (syn *kubeSyncer) parsePodEvent(e watch.Event) *api.Update {
 	pod, ok := e.Object.(*k8sapi.Pod)
 	if !ok {
-		panic(fmt.Sprintf("Invalid pod event. Type: %s, Object: %+v", e.Type, e.Object))
+		log.Panicf("Invalid pod event. Type: %s, Object: %+v", e.Type, e.Object)
 	}
 
 	// Ignore any updates for host networked pods.
@@ -484,7 +483,7 @@ func (syn *kubeSyncer) parsePodEvent(e watch.Event) *api.Update {
 	// Convert the received Namespace into a KVPair.
 	kvp, err := syn.kc.converter.podToWorkloadEndpoint(pod)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 
 	// We behave differently based on the event type.
@@ -526,13 +525,13 @@ func (syn *kubeSyncer) parseNetworkPolicyEvent(e watch.Event) *api.Update {
 	// First, check the event type.
 	np, ok := e.Object.(*extensions.NetworkPolicy)
 	if !ok {
-		panic(fmt.Sprintf("Invalid NetworkPolicy event. Type: %s, Object: %+v", e.Type, e.Object))
+		log.Panicf("Invalid NetworkPolicy event. Type: %s, Object: %+v", e.Type, e.Object)
 	}
 
 	// Convert the received NetworkPolicy into a profile KVPair.
 	kvp, err := syn.kc.converter.networkPolicyToPolicy(np)
 	if err != nil {
-		panic(err)
+		log.Panicf("%s", err)
 	}
 
 	// For deletes, we need to nil out the Value part of the KVPair.
