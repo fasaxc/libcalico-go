@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/projectcalico/libcalico-go/lib/backend/model"
 	cnet "github.com/projectcalico/libcalico-go/lib/net"
 	"github.com/projectcalico/libcalico-go/lib/numorstring"
@@ -348,7 +349,7 @@ func (c converter) k8sPortToCalico(port extensions.NetworkPolicyPort) []numorstr
 	if port.Port != nil {
 		p, err := numorstring.PortFromString(port.Port.String())
 		if err != nil {
-			panic(fmt.Sprintf("Invalid port %+v: %s", port.Port, err))
+			log.Panic("Invalid port %+v: %s", port.Port, err)
 		}
 		return []numorstring.Port{p}
 	}
