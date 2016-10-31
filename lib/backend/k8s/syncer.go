@@ -48,26 +48,26 @@ type resourceVersions struct {
 	networkPolicyVersion string
 }
 
-func getUpdateType(e watch.Event) model.UpdateType {
+func getUpdateType(e watch.Event) api.UpdateType {
 	// Determine the update type.
-	updateType := model.UpdateTypeKVUnknown
+	updateType := api.UpdateTypeKVUnknown
 	switch e.Type {
 	case watch.Added:
-		updateType = model.UpdateTypeKVNew
+		updateType = api.UpdateTypeKVNew
 	case watch.Deleted:
-		updateType = model.UpdateTypeKVDeleted
+		updateType = api.UpdateTypeKVDeleted
 	case watch.Modified:
-		updateType = model.UpdateTypeKVUpdated
+		updateType = api.UpdateTypeKVUpdated
 	}
 	return updateType
 }
 
 func (syn *kubeSyncer) Start() {
 	// Channel for receiving updates from a snapshot.
-	snapshotUpdates := make(chan *[]model.Update)
+	snapshotUpdates := make(chan *[]api.Update)
 
 	// Channel for receiving updates from the watcher.
-	watchUpdates := make(chan *model.Update)
+	watchUpdates := make(chan *api.Update)
 
 	// Channel used by the watcher to trigger a re-sync.
 	triggerResync := make(chan *resourceVersions, 5)
@@ -97,9 +97,9 @@ func (syn *kubeSyncer) Start() {
 }
 
 // mergeUpdates ensures that callbacks are all executed from the same thread.
-func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]model.Update, watchUpdates chan *model.Update, statusUpdates chan api.SyncStatus) {
-	var update *model.Update
-	var updates *[]model.Update
+func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]api.Update, watchUpdates chan *api.Update, statusUpdates chan api.SyncStatus) {
+	var update *api.Update
+	var updates *[]api.Update
 	currentStatus := api.WaitForDatastore
 	newStatus := api.WaitForDatastore
 	syn.callbacks.OnStatusUpdated(api.WaitForDatastore)
@@ -116,7 +116,7 @@ func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]model.Update, watchU
 			if currentStatus != api.InSync {
 				panic("Recieved watch update while not in sync")
 			}
-			syn.callbacks.OnUpdates([]model.Update{*update})
+			syn.callbacks.OnUpdates([]api.Update{*update})
 		case newStatus = <-statusUpdates:
 			if newStatus != currentStatus {
 				log.Debugf("Status update. %s -> %s", currentStatus, newStatus)
@@ -127,7 +127,7 @@ func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]model.Update, watchU
 	}
 }
 
-func (syn *kubeSyncer) readSnapshot(updateChan chan *[]model.Update,
+func (syn *kubeSyncer) readSnapshot(updateChan chan *[]api.Update,
 	resyncChan chan *resourceVersions, initialVersionChan chan *resourceVersions, statusUpdates chan api.SyncStatus) {
 
 	log.Info("Starting readSnapshot worker")
@@ -166,8 +166,8 @@ func (syn *kubeSyncer) readSnapshot(updateChan chan *[]model.Update,
 // performSnapshot returns a list of existing objects in the datastore, and
 // populates the provided resourceVersions with the latest k8s resource version
 // for each.
-func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Update {
-	snap := []model.Update{}
+func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update {
+	snap := []api.Update{}
 	opts := k8sapi.ListOptions{}
 
 	// Loop until we successfully are able to accesss the API.
@@ -190,9 +190,9 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 			}
 			rules, tags, labels := compat.ToTagsLabelsRules(profile)
 			snap = append(snap,
-				model.Update{KVPair: *rules, UpdateType: model.UpdateTypeKVNew},
-				model.Update{KVPair: *tags, UpdateType: model.UpdateTypeKVNew},
-				model.Update{KVPair: *labels, UpdateType: model.UpdateTypeKVNew},
+				api.Update{KVPair: *rules, UpdateType: api.UpdateTypeKVNew},
+				api.Update{KVPair: *tags, UpdateType: api.UpdateTypeKVNew},
+				api.Update{KVPair: *labels, UpdateType: api.UpdateTypeKVNew},
 			)
 
 			// If this is the kube-system Namespace, also send
@@ -200,7 +200,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 			if ns.ObjectMeta.Name == "kube-system" {
 				pool, _ := syn.kc.converter.namespaceToPool(&ns)
 				if pool != nil {
-					snap = append(snap, model.Update{KVPair: *pool, UpdateType: model.UpdateTypeKVNew})
+					snap = append(snap, api.Update{KVPair: *pool, UpdateType: api.UpdateTypeKVNew})
 				}
 			}
 		}
@@ -217,7 +217,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 		versions.networkPolicyVersion = npList.ListMeta.ResourceVersion
 		for _, np := range npList.Items {
 			pol, _ := syn.kc.converter.networkPolicyToPolicy(&np)
-			snap = append(snap, model.Update{KVPair: *pol, UpdateType: model.UpdateTypeKVNew})
+			snap = append(snap, api.Update{KVPair: *pol, UpdateType: api.UpdateTypeKVNew})
 		}
 
 		// Get Pods (WorkloadEndpoints)
@@ -233,7 +233,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 		for _, po := range poList.Items {
 			wep, _ := syn.kc.converter.podToWorkloadEndpoint(&po)
 			if wep != nil {
-				snap = append(snap, model.Update{KVPair: *wep, UpdateType: model.UpdateTypeKVNew})
+				snap = append(snap, api.Update{KVPair: *wep, UpdateType: api.UpdateTypeKVNew})
 			}
 		}
 
@@ -246,7 +246,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 		}
 
 		for _, c := range confList {
-			snap = append(snap, model.Update{KVPair: *c, UpdateType: model.UpdateTypeKVNew})
+			snap = append(snap, api.Update{KVPair: *c, UpdateType: api.UpdateTypeKVNew})
 		}
 
 		// Include ready state.
@@ -256,7 +256,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		snap = append(snap, model.Update{KVPair: *ready, UpdateType: model.UpdateTypeKVNew})
+		snap = append(snap, api.Update{KVPair: *ready, UpdateType: api.UpdateTypeKVNew})
 
 		log.Infof("Snapshot resourceVersions: %+v", versions)
 		log.Debugf("Created snapshot: %+v", snap)
@@ -266,7 +266,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]model.Upda
 
 // watchKubeAPI watches the Kubernetes API and sends updates to the merge thread.
 // If it encounters an error or falls behind, it triggers a new snapshot.
-func (syn *kubeSyncer) watchKubeAPI(updateChan chan *model.Update,
+func (syn *kubeSyncer) watchKubeAPI(updateChan chan *api.Update,
 	resyncChan chan *resourceVersions, initialVersionSource chan *resourceVersions) {
 
 	log.Info("Starting Kubernetes API watch worker")
@@ -300,7 +300,7 @@ func (syn *kubeSyncer) watchKubeAPI(updateChan chan *model.Update,
 	poChan := poWatch.ResultChan()
 	npChan := npWatch.ResultChan()
 	var event watch.Event
-	var upd *model.Update
+	var upd *api.Update
 	needsResync := false
 
 	log.Info("Starting Kubernetes API watch loop")
@@ -413,7 +413,7 @@ func (syn *kubeSyncer) eventTriggersResync(e watch.Event) bool {
 	return false
 }
 
-func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*model.Update {
+func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
 	ns, ok := e.Object.(*k8sapi.Namespace)
 	if !ok {
 		panic(fmt.Sprintf("Invalid namespace event: %+v", e.Object))
@@ -445,13 +445,13 @@ func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*model.Update {
 
 	// Return the updates.
 	updateType := getUpdateType(e)
-	updates := []*model.Update{
-		&model.Update{KVPair: *rules, UpdateType: updateType},
-		&model.Update{KVPair: *tags, UpdateType: updateType},
-		&model.Update{KVPair: *labels, UpdateType: updateType},
+	updates := []*api.Update{
+		&api.Update{KVPair: *rules, UpdateType: updateType},
+		&api.Update{KVPair: *tags, UpdateType: updateType},
+		&api.Update{KVPair: *labels, UpdateType: updateType},
 	}
 	if pool != nil {
-		updates = append(updates, &model.Update{KVPair: *pool, UpdateType: updateType})
+		updates = append(updates, &api.Update{KVPair: *pool, UpdateType: updateType})
 	}
 	return updates
 }
@@ -462,7 +462,7 @@ var labelCache map[string]map[string]string = map[string]map[string]string{}
 
 // parsePodEvent returns a KVPair for the given event.  If the event isn't
 // useful, parsePodEvent returns nil to indicate that there is nothing to do.
-func (syn *kubeSyncer) parsePodEvent(e watch.Event) *model.Update {
+func (syn *kubeSyncer) parsePodEvent(e watch.Event) *api.Update {
 	pod, ok := e.Object.(*k8sapi.Pod)
 	if !ok {
 		panic(fmt.Sprintf("Invalid pod event. Type: %s, Object: %+v", e.Type, e.Object))
@@ -511,10 +511,10 @@ func (syn *kubeSyncer) parsePodEvent(e watch.Event) *model.Update {
 		labelCache[workload] = labels
 	}
 
-	return &model.Update{KVPair: *kvp, UpdateType: getUpdateType(e)}
+	return &api.Update{KVPair: *kvp, UpdateType: getUpdateType(e)}
 }
 
-func (syn *kubeSyncer) parseNetworkPolicyEvent(e watch.Event) *model.Update {
+func (syn *kubeSyncer) parseNetworkPolicyEvent(e watch.Event) *api.Update {
 	log.Debug("Parsing NetworkPolicy watch event")
 	// First, check the event type.
 	np, ok := e.Object.(*extensions.NetworkPolicy)
@@ -532,5 +532,5 @@ func (syn *kubeSyncer) parseNetworkPolicyEvent(e watch.Event) *model.Update {
 	if e.Type == watch.Deleted {
 		kvp.Value = nil
 	}
-	return &model.Update{KVPair: *kvp, UpdateType: getUpdateType(e)}
+	return &api.Update{KVPair: *kvp, UpdateType: getUpdateType(e)}
 }
