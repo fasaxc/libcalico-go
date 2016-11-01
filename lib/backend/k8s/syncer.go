@@ -91,7 +91,9 @@ func (syn *kubeSyncer) readFromKubernetesAPI() {
 			syn.callbacks.OnStatusUpdated(api.ResyncInProgress)
 
 			// Perform the snapshot and update the status.
-			syn.performSnapshot(&latestVersions)
+			snap := syn.performSnapshot(&latestVersions)
+			syn.callbacks.OnUpdates(snap)
+
 			log.Warnf("Snapshot complete - start watch from %+v", latestVersions)
 			syn.callbacks.OnStatusUpdated(api.InSync)
 
@@ -180,7 +182,7 @@ func (syn *kubeSyncer) readFromKubernetesAPI() {
 // performSnapshot returns a list of existing objects in the datastore, and
 // populates the provided resourceVersions with the latest k8s resource version
 // for each.
-func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update {
+func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) []api.Update {
 	snap := []api.Update{}
 	opts := k8sapi.ListOptions{}
 
@@ -278,7 +280,7 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update
 
 		log.Infof("Snapshot resourceVersions: %+v", versions)
 		log.Debugf("Created snapshot: %+v", snap)
-		return &snap
+		return snap
 	}
 }
 
@@ -294,6 +296,7 @@ func (syn *kubeSyncer) eventTriggersResync(e watch.Event) bool {
 	// If we encounter an error, or if the event is nil (which can indicate
 	// an unexpected connection close).
 	if e.Type == watch.Error || e.Object == nil {
+		log.Warnf("Event requires snapshot: %+v", e)
 		return true
 	}
 	return false
