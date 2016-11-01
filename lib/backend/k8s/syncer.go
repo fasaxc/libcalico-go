@@ -62,103 +62,121 @@ func getUpdateType(e watch.Event) api.UpdateType {
 }
 
 func (syn *kubeSyncer) Start() {
-	// Channel for receiving updates from a snapshot.
-	snapshotUpdates := make(chan *[]api.Update)
-
-	// Channel for receiving updates from the watcher.
-	watchUpdates := make(chan *api.Update)
-
-	// Channel used by the watcher to trigger a re-sync.
-	triggerResync := make(chan *resourceVersions, 5)
-
-	// Channel to send the index from which to start the snapshot.
-	initialSnapshotIndex := make(chan *resourceVersions)
-
-	// Status channel
-	statusUpdates := make(chan api.SyncStatus)
-
-	// If we're not in one-shot mode, start the API watcher to
-	// gather updates.
-	if !syn.OneShot {
-		go syn.watchKubeAPI(watchUpdates, triggerResync, initialSnapshotIndex)
-	}
-
-	// Start a background thread to read snapshots from etcd.  It will
-	// read a start-of-day snapshot and then wait to be signalled on the
-	// resyncIndex channel.
-	go syn.readSnapshot(snapshotUpdates, triggerResync, initialSnapshotIndex, statusUpdates)
-
-	// Start a routine to merge updates from the snapshot routine and the
-	// watch routine (if running), and pass information to callbacks.
-	// TODO: We're never actually running both the snapshot thread and the watch thread at the same time
-	// so what's the point?
-	go syn.mergeUpdates(snapshotUpdates, watchUpdates, statusUpdates)
+	// Start a background thread to read snapshots from and watch the Kubernetes API,
+	// and pass updates via callbacks.
+	go syn.readFromKubernetesAPI()
 }
 
-// mergeUpdates ensures that callbacks are all executed from the same thread.
-func (syn *kubeSyncer) mergeUpdates(snapshotUpdates chan *[]api.Update, watchUpdates chan *api.Update, statusUpdates chan api.SyncStatus) {
-	var update *api.Update
-	var updates *[]api.Update
-	currentStatus := api.WaitForDatastore
-	newStatus := api.WaitForDatastore
-	syn.callbacks.OnStatusUpdated(api.WaitForDatastore)
+func (syn *kubeSyncer) readFromKubernetesAPI() {
+	log.Info("Starting Kubernetes API read worker")
+
+	// Keep track of the latest resource versions.
+	latestVersions := resourceVersions{}
+
+	// Other watcher vars.
+	var nsChan, poChan, npChan <-chan watch.Event
+	var event watch.Event
+	var upd *api.Update
+	var opts k8sapi.ListOptions
+
+	// Always perform an initial snapshot.
+	needsResync := true
+
+	log.Info("Starting Kubernetes API read loop")
 	for {
-		select {
-		case updates = <-snapshotUpdates:
-			log.Debugf("Snapshot update: %+v", updates)
-			if currentStatus != api.ResyncInProgress {
-				log.Panic("Recieved snapshot update while not resyncing")
+		// If we need to resync, do so.
+		if needsResync {
+			// Set status to ResyncInProgress.
+			log.Warnf("Resync required - latest versions: %+v", latestVersions)
+			syn.callbacks.OnStatusUpdated(api.ResyncInProgress)
+
+			// Perform the snapshot and update the status.
+			syn.performSnapshot(&latestVersions)
+			log.Warnf("Snapshot complete - start watch from %+v", latestVersions)
+			syn.callbacks.OnStatusUpdated(api.InSync)
+
+			// Create the Kubernetes API watchers.
+			opts = k8sapi.ListOptions{ResourceVersion: latestVersions.namespaceVersion}
+			nsWatch, err := syn.kc.clientSet.Namespaces().Watch(opts)
+			if err != nil {
+				log.Warn("Failed to connect to API, retrying")
+				time.Sleep(1 * time.Second)
+				continue
 			}
-			syn.callbacks.OnUpdates(*updates)
-		case update = <-watchUpdates:
-			log.Debugf("Watch update: %+v", update)
-			if currentStatus != api.InSync {
-				log.Panic("Recieved watch update while not in sync")
+			opts = k8sapi.ListOptions{ResourceVersion: latestVersions.podVersion}
+			poWatch, err := syn.kc.clientSet.Pods("").Watch(opts)
+			if err != nil {
+				log.Warn("Failed to connect to API, retrying")
+				time.Sleep(1 * time.Second)
+				continue
 			}
-			syn.callbacks.OnUpdates([]api.Update{*update})
-		case newStatus = <-statusUpdates:
-			if newStatus != currentStatus {
-				log.Debugf("Status update. %s -> %s", currentStatus, newStatus)
-				syn.callbacks.OnStatusUpdated(newStatus)
-				currentStatus = newStatus
+			opts = k8sapi.ListOptions{ResourceVersion: latestVersions.networkPolicyVersion}
+			npWatch, err := syn.kc.clientSet.NetworkPolicies("").Watch(opts)
+			if err != nil {
+				log.Warn("Failed to connect to API, retrying")
+				time.Sleep(1 * time.Second)
+				continue
 			}
+
+			nsChan = nsWatch.ResultChan()
+			poChan = poWatch.ResultChan()
+			npChan = npWatch.ResultChan()
+
+			// Success - reset the flag.
+			needsResync = false
 		}
-	}
-}
 
-func (syn *kubeSyncer) readSnapshot(updateChan chan *[]api.Update,
-	resyncChan chan *resourceVersions, initialVersionChan chan *resourceVersions, statusUpdates chan api.SyncStatus) {
+		// Don't start watches if we're in oneshot mode.
+		if syn.OneShot {
+			return
+		}
 
-	log.Info("Starting readSnapshot worker")
-	// Indicate we're starting a resync.
-	statusUpdates <- api.ResyncInProgress
+		// Select on the various watch channels.
+		select {
+		case event = <-nsChan:
+			log.Debugf("Incoming Namespace watch event. Type=%s", event.Type)
+			if needsResync = syn.eventTriggersResync(event); needsResync {
+				// We need to resync.  Break out of the inner for loop, back
+				// into the sync loop.
+				log.Warn("Event triggered resync: %+v", event)
+				break
+			}
 
-	// Perform an initial snapshot, and send the latest versions to the
-	// watcher routine.
-	initialVersions := resourceVersions{}
-	updateChan <- syn.performSnapshot(&initialVersions)
+			// Event is OK - parse it.
+			upds := syn.parseNamespaceEvent(event)
+			latestVersions.namespaceVersion = upds[0].KVPair.Revision.(string)
+			syn.callbacks.OnUpdates(upds)
+			continue
+		case event = <-poChan:
+			log.Debugf("Incoming Pod watch event. Type=%s", event.Type)
+			if needsResync = syn.eventTriggersResync(event); needsResync {
+				// We need to resync.  Break out of the inner for loop, back
+				// into the sync loop.
+				log.Warn("Event triggered resync: %+v", event)
+				break
+			}
 
-	// Indicate we're in sync for the first time.
-	statusUpdates <- api.InSync
+			// Event is OK - parse it.
+			if upd = syn.parsePodEvent(event); upd != nil {
+				// Only send the update if we care about it.  We filter
+				// out a number of events that aren't useful for us.
+				latestVersions.podVersion = upd.KVPair.Revision.(string)
+				syn.callbacks.OnUpdates([]api.Update{*upd})
+			}
+		case event = <-npChan:
+			log.Debugf("Incoming NetworkPolicy watch event. Type=%s", event.Type)
+			if needsResync = syn.eventTriggersResync(event); needsResync {
+				// We need to resync.  Break out of the inner for loop, back
+				// into the sync loop.
+				log.Warn("Event triggered resync: %+v", event)
+				break
+			}
 
-	// Trigger the watcher routine to start watching at the
-	// provided versions.
-	initialVersionChan <- &initialVersions
-
-	for {
-		// Wait for an event on the resync request channel.
-		log.Debug("Initial snapshot complete - waiting for resnc trigger")
-		newVersions := <-resyncChan
-		statusUpdates <- api.ResyncInProgress
-		log.Warnf("Received snapshot trigger for versions %+v", newVersions)
-
-		// We've received an event - perform a resync.
-		updateChan <- syn.performSnapshot(newVersions)
-		statusUpdates <- api.InSync
-
-		// Send new resource versions back to watcher thread so
-		// it can restart its watch.
-		initialVersionChan <- newVersions
+			// Event is OK - parse it and send it over the channel.
+			upd = syn.parseNetworkPolicyEvent(event)
+			latestVersions.networkPolicyVersion = upd.KVPair.Revision.(string)
+			syn.callbacks.OnUpdates([]api.Update{*upd})
+		}
 	}
 }
 
@@ -271,138 +289,6 @@ func (syn *kubeSyncer) performSnapshot(versions *resourceVersions) *[]api.Update
 // If it encounters an error or falls behind, it triggers a new snapshot.
 func (syn *kubeSyncer) watchKubeAPI(updateChan chan *api.Update,
 	resyncChan chan *resourceVersions, initialVersionSource chan *resourceVersions) {
-
-	log.Info("Starting Kubernetes API watch worker")
-
-	// Wait for the initial resourceVersions to watch for.
-	log.Info("Waiting for initial snapshot to complete")
-	initialVersions := <-initialVersionSource
-	log.Infof("Received initialVersions: %+v", initialVersions)
-
-	// Get watch channels for each resource.
-	opts := k8sapi.ListOptions{ResourceVersion: initialVersions.namespaceVersion}
-	nsWatch, err := syn.kc.clientSet.Namespaces().Watch(opts)
-	if err != nil {
-		log.Panicf("%s", err)
-	}
-	opts = k8sapi.ListOptions{ResourceVersion: initialVersions.podVersion}
-	poWatch, err := syn.kc.clientSet.Pods("").Watch(opts)
-	if err != nil {
-		log.Panicf("%s", err)
-	}
-	opts = k8sapi.ListOptions{ResourceVersion: initialVersions.networkPolicyVersion}
-	npWatch, err := syn.kc.clientSet.NetworkPolicies("").Watch(opts)
-	if err != nil {
-		log.Panicf("%s", err)
-	}
-
-	// Keep track of the latest resource versions.
-	latestVersions := initialVersions
-
-	nsChan := nsWatch.ResultChan()
-	poChan := poWatch.ResultChan()
-	npChan := npWatch.ResultChan()
-	var event watch.Event
-	var upd *api.Update
-	needsResync := false
-
-	log.Info("Starting Kubernetes API watch loop")
-	for {
-		// If we need to resync, do so.
-		if needsResync {
-			log.Warnf("Resync required - sending latest versions: %+v", latestVersions)
-			resyncChan <- latestVersions
-
-			// Wait to be told the new versions to watch.
-			log.Warn("Waiting for snapshot to complete")
-			latestVersions = <-initialVersionSource
-			log.Warnf("Snapshot complete after resync - start watch from %+v", latestVersions)
-
-			// Re-create the watches.
-			opts = k8sapi.ListOptions{ResourceVersion: initialVersions.namespaceVersion}
-			nsWatch, err = syn.kc.clientSet.Namespaces().Watch(opts)
-			if err != nil {
-				log.Warn("Failed to connect to API, retrying")
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			opts = k8sapi.ListOptions{ResourceVersion: initialVersions.podVersion}
-			poWatch, err = syn.kc.clientSet.Pods("").Watch(opts)
-			if err != nil {
-				log.Warn("Failed to connect to API, retrying")
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			opts = k8sapi.ListOptions{ResourceVersion: initialVersions.networkPolicyVersion}
-			npWatch, err = syn.kc.clientSet.NetworkPolicies("").Watch(opts)
-			if err != nil {
-				log.Warn("Failed to connect to API, retrying")
-				time.Sleep(1 * time.Second)
-				continue
-			}
-
-			nsChan = nsWatch.ResultChan()
-			poChan = poWatch.ResultChan()
-			npChan = npWatch.ResultChan()
-
-			// Successfull resync - reset the flag.
-			needsResync = false
-		}
-
-		// Select on the various watch channels.
-		select {
-		case event = <-nsChan:
-			log.Debugf("Incoming Namespace watch event. Type=%s", event.Type)
-			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
-				log.Warn("Event triggered resync: %+v", event)
-				break
-			}
-
-			// Event is OK - parse it.
-			upds := syn.parseNamespaceEvent(event)
-			for _, k := range upds {
-				if k == nil {
-					// This can return nil when the event is not
-					// one we care about.
-					continue
-				}
-				updateChan <- k
-				latestVersions.namespaceVersion = k.KVPair.Revision.(string)
-			}
-			continue
-		case event = <-poChan:
-			log.Debugf("Incoming Pod watch event. Type=%s", event.Type)
-			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
-				log.Warn("Event triggered resync: %+v", event)
-				break
-			}
-
-			// Event is OK - parse it.
-			if upd = syn.parsePodEvent(event); upd != nil {
-				// Only send the update if we care about it.  We filter
-				// out a number of events that aren't useful for us.
-				latestVersions.podVersion = upd.KVPair.Revision.(string)
-				updateChan <- upd
-			}
-		case event = <-npChan:
-			log.Debugf("Incoming NetworkPolicy watch event. Type=%s", event.Type)
-			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
-				log.Warn("Event triggered resync: %+v", event)
-				break
-			}
-
-			// Event is OK - parse it and send it over the channel.
-			upd = syn.parseNetworkPolicyEvent(event)
-			updateChan <- upd
-			latestVersions.networkPolicyVersion = upd.KVPair.Revision.(string)
-		}
-	}
 }
 
 // eventTriggersResync returns true of the given event requires a
@@ -416,7 +302,7 @@ func (syn *kubeSyncer) eventTriggersResync(e watch.Event) bool {
 	return false
 }
 
-func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
+func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []api.Update {
 	ns, ok := e.Object.(*k8sapi.Namespace)
 	if !ok {
 		log.Panicf("Invalid namespace event: %+v", e.Object)
@@ -451,13 +337,13 @@ func (syn *kubeSyncer) parseNamespaceEvent(e watch.Event) []*api.Update {
 
 	// Return the updates.
 	updateType := getUpdateType(e)
-	updates := []*api.Update{
-		&api.Update{KVPair: *rules, UpdateType: updateType},
-		&api.Update{KVPair: *tags, UpdateType: updateType},
-		&api.Update{KVPair: *labels, UpdateType: updateType},
+	updates := []api.Update{
+		api.Update{KVPair: *rules, UpdateType: updateType},
+		api.Update{KVPair: *tags, UpdateType: updateType},
+		api.Update{KVPair: *labels, UpdateType: updateType},
 	}
 	if pool != nil {
-		updates = append(updates, &api.Update{KVPair: *pool, UpdateType: updateType})
+		updates = append(updates, api.Update{KVPair: *pool, UpdateType: updateType})
 	}
 	return updates
 }
