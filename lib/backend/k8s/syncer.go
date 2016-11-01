@@ -136,10 +136,9 @@ func (syn *kubeSyncer) readFromKubernetesAPI() {
 		case event = <-nsChan:
 			log.Debugf("Incoming Namespace watch event. Type=%s", event.Type)
 			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
+				// We need to resync.  Break out of the back into the sync loop.
 				log.Warn("Event triggered resync: %+v", event)
-				break
+				continue
 			}
 
 			// Event is OK - parse it.
@@ -150,10 +149,9 @@ func (syn *kubeSyncer) readFromKubernetesAPI() {
 		case event = <-poChan:
 			log.Debugf("Incoming Pod watch event. Type=%s", event.Type)
 			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
+				// We need to resync.  Break out of the back into the sync loop.
 				log.Warn("Event triggered resync: %+v", event)
-				break
+				continue
 			}
 
 			// Event is OK - parse it.
@@ -166,10 +164,9 @@ func (syn *kubeSyncer) readFromKubernetesAPI() {
 		case event = <-npChan:
 			log.Debugf("Incoming NetworkPolicy watch event. Type=%s", event.Type)
 			if needsResync = syn.eventTriggersResync(event); needsResync {
-				// We need to resync.  Break out of the inner for loop, back
-				// into the sync loop.
+				// We need to resync.  Break out of the back into the sync loop.
 				log.Warn("Event triggered resync: %+v", event)
-				break
+				continue
 			}
 
 			// Event is OK - parse it and send it over the channel.
