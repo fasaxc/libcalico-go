@@ -368,41 +368,18 @@ func (c *KubeClient) getReadyStatus(k model.ReadyFlagKey) (*model.KVPair, error)
 	return &model.KVPair{Key: k, Value: true}, nil
 }
 
-// TODO: What global config do we actually need to support?
 func (c *KubeClient) getGlobalConfig(k model.GlobalConfigKey) (*model.KVPair, error) {
-	return &model.KVPair{
-		Key:   k,
-		Value: "",
-	}, nil
+	return nil, goerrors.New("Get for GlobalConfig not supported in kubernetes backend")
 }
 
-// TODO: What global config do we actually need to support?
 func (c *KubeClient) listGlobalConfig(l model.GlobalConfigListOptions) ([]*model.KVPair, error) {
-	return []*model.KVPair{
-		&model.KVPair{
-			Key:   model.GlobalConfigKey{Name: "LogSeveritySys"},
-			Value: "debug",
-		},
-		&model.KVPair{
-			Key:   model.GlobalConfigKey{Name: "LogSeverityScreen"},
-			Value: "debug",
-		},
-		&model.KVPair{
-			Key:   model.GlobalConfigKey{Name: "LogSeverityFile"},
-			Value: "debug",
-		},
-	}, nil
+	return []*model.KVPair{}, nil
 }
 
-// TODO: What config do we actually need to support?
 func (c *KubeClient) getHostConfig(k model.HostConfigKey) (*model.KVPair, error) {
-	return &model.KVPair{
-		Key:   k,
-		Value: "",
-	}, nil
+	return nil, goerrors.New("Get for HostConfig not supported in kubernetes backend")
 }
 
-// TODO: What config do we actually need to support?
 func (c *KubeClient) listHostConfig(l model.HostConfigListOptions) ([]*model.KVPair, error) {
 	return []*model.KVPair{}, nil
 }
