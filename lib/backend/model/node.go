@@ -1,4 +1,4 @@
-// Copyright (c) 2016 Tigera, Inc. All rights reserved.
+// Copyright (c) 2016-2017 Tigera, Inc. All rights reserved.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,15 +55,19 @@ type NodeKey struct {
 }
 
 func (key NodeKey) defaultPath() (string, error) {
-	return "", goerrors.New("Node is a composite type, so not handled with a single path")
+	if key.Hostname == "" {
+		return "", errors.ErrorInsufficientIdentifiers{Name: "node"}
+	}
+	e := fmt.Sprintf("/calico/felix/v1/host/%s/metadata", key.Hostname)
+	return e, nil
 }
 
 func (key NodeKey) defaultDeletePath() (string, error) {
-	return "", goerrors.New("Node is a composite type, so not handled with a single path")
+	return key.defaultPath()
 }
 
 func (key NodeKey) defaultDeleteParentPaths() ([]string, error) {
-	return nil, goerrors.New("Node is composite type, so not handled with a single path")
+	return nil, nil
 }
 
 func (key NodeKey) valueType() reflect.Type {
