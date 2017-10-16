@@ -177,6 +177,11 @@ func KeyFromDefaultPath(path string) Key {
 			Hostname:   m[1],
 			EndpointID: unescapeName(m[2]),
 		}
+	} else if m := matchNetworkSet.FindStringSubmatch(path); m != nil {
+		log.Debugf("Path is a network set: %v", path)
+		return NetworkSetKey{
+			Name: unescapeName(m[1]),
+		}
 	} else if m := matchPolicy.FindStringSubmatch(path); m != nil {
 		log.Debugf("Path is a policy: %v", path)
 		return PolicyKey{

@@ -90,6 +90,11 @@ var _ = DescribeTable(
 		HostConfigKey{Hostname: "hostname", Name: "foo"},
 	),
 	Entry(
+		"network set",
+		"/calico/v1/netset/netsetname",
+		NetworkSetKey{Name: "netsetname"},
+	),
+	Entry(
 		"ready flag",
 		"/calico/v1/Ready",
 		ReadyFlagKey{},
