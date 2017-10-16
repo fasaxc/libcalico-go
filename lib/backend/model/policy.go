@@ -22,8 +22,8 @@ import (
 
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/projectcalico/libcalico-go/lib/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -89,11 +89,14 @@ func (options PolicyListOptions) KeyFromDefaultPath(path string) Key {
 }
 
 type Policy struct {
-	Order         *float64 `json:"order,omitempty" validate:"omitempty"`
-	InboundRules  []Rule   `json:"inbound_rules,omitempty" validate:"omitempty,dive"`
-	OutboundRules []Rule   `json:"outbound_rules,omitempty" validate:"omitempty,dive"`
-	Selector      string   `json:"selector" validate:"selector"`
-	DoNotTrack    bool     `json:"untracked,omitempty"`
+	Order         *float64          `json:"order,omitempty" validate:"omitempty"`
+	InboundRules  []Rule            `json:"inbound_rules,omitempty" validate:"omitempty,dive"`
+	OutboundRules []Rule            `json:"outbound_rules,omitempty" validate:"omitempty,dive"`
+	Selector      string            `json:"selector" validate:"selector"`
+	DoNotTrack    bool              `json:"untracked,omitempty"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
+	PreDNAT       bool              `json:"pre_dnat,omitempty"`
+	Types         []string          `json:"types,omitempty"`
 }
 
 func (p Policy) String() string {
@@ -113,5 +116,7 @@ func (p Policy) String() string {
 	}
 	parts = append(parts, fmt.Sprintf("outbound:%v", strings.Join(outRules, ";")))
 	parts = append(parts, fmt.Sprintf("untracked:%v", p.DoNotTrack))
+	parts = append(parts, fmt.Sprintf("pre_dnat:%v", p.PreDNAT))
+	parts = append(parts, fmt.Sprintf("types:%v", strings.Join(p.Types, ";")))
 	return strings.Join(parts, ",")
 }

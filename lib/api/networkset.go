@@ -15,6 +15,7 @@
 package api
 
 import (
+	"fmt"
 	"github.com/projectcalico/libcalico-go/lib/api/unversioned"
 	"github.com/projectcalico/libcalico-go/lib/net"
 )
@@ -27,6 +28,16 @@ type NetworkSet struct {
 	unversioned.TypeMetadata
 	Metadata NetworkSetMetadata `json:"metadata,omitempty"`
 	Spec     NetworkSetSpec     `json:"spec,omitempty"`
+}
+
+func (t NetworkSet) GetResourceMetadata() unversioned.ResourceMetadata {
+	return t.Metadata
+}
+
+// String() returns the human-readable string representation of a NetworkSet instance
+// which is defined by its Node and Name.
+func (t NetworkSet) String() string {
+	return fmt.Sprintf("NetworkSet(Name=%s)", t.Metadata.Name)
 }
 
 // NetworkSetMetadata contains the Metadata for a NetworkSet resource.

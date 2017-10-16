@@ -15,6 +15,8 @@
 package api
 
 import (
+	"fmt"
+
 	"github.com/projectcalico/libcalico-go/lib/api/unversioned"
 	"github.com/projectcalico/libcalico-go/lib/net"
 	"github.com/projectcalico/libcalico-go/lib/numorstring"
@@ -38,6 +40,16 @@ type Node struct {
 	unversioned.TypeMetadata
 	Metadata NodeMetadata `json:"metadata,omitempty"`
 	Spec     NodeSpec     `json:"spec,omitempty"`
+}
+
+func (t Node) GetResourceMetadata() unversioned.ResourceMetadata {
+	return t.Metadata
+}
+
+// String() returns the human-readable string representation of a Node instance
+// which is defined by its Name.
+func (t Node) String() string {
+	return fmt.Sprintf("Node(Name=%s)", t.Metadata.Name)
 }
 
 // NodeMetadata contains the metadata for a Calico Node resource.

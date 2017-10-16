@@ -21,7 +21,6 @@ import (
 	"io/ioutil"
 	"reflect"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/kelseyhightower/envconfig"
 	yaml "github.com/projectcalico/go-yaml-wrapper"
 	"github.com/projectcalico/libcalico-go/lib/api"
@@ -32,6 +31,7 @@ import (
 	"github.com/projectcalico/libcalico-go/lib/errors"
 	"github.com/projectcalico/libcalico-go/lib/validator"
 	"github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 // Client contains
@@ -157,7 +157,12 @@ func LoadClientConfig(filename string) (*api.CalicoAPIConfig, error) {
 		if err != nil {
 			return nil, err
 		}
-		return LoadClientConfigFromBytes(b)
+
+		c, err := LoadClientConfigFromBytes(b)
+		if err != nil {
+			return nil, fmt.Errorf("syntax error in %s: %s", filename, err)
+		}
+		return c, nil
 	} else {
 		return LoadClientConfigFromEnvironment()
 	}
@@ -221,9 +226,13 @@ type conversionHelper interface {
 // Untyped interface for creating an API object.  This is called from the
 // typed interface.  This assumes a 1:1 mapping between the API resource and
 // the backend object.
-func (c *Client) create(apiObject unversioned.Resource, helper conversionHelper) error {
+func (c *Client) create(apiObject unversioned.ResourceObject, helper conversionHelper) error {
 	// Validate the supplied data before writing to the datastore.
 	if err := validator.Validate(apiObject); err != nil {
+		return err
+	}
+
+	if err := validator.ValidateMetadataIDsAssigned(apiObject.GetResourceMetadata()); err != nil {
 		return err
 	}
 
@@ -238,9 +247,13 @@ func (c *Client) create(apiObject unversioned.Resource, helper conversionHelper)
 
 // Untyped interface for updating an API object.  This is called from the
 // typed interface.
-func (c *Client) update(apiObject unversioned.Resource, helper conversionHelper) error {
+func (c *Client) update(apiObject unversioned.ResourceObject, helper conversionHelper) error {
 	// Validate the supplied data before writing to the datastore.
 	if err := validator.Validate(apiObject); err != nil {
+		return err
+	}
+
+	if err := validator.ValidateMetadataIDsAssigned(apiObject.GetResourceMetadata()); err != nil {
 		return err
 	}
 
@@ -255,9 +268,13 @@ func (c *Client) update(apiObject unversioned.Resource, helper conversionHelper)
 
 // Untyped interface for applying an API object.  This is called from the
 // typed interface.
-func (c *Client) apply(apiObject unversioned.Resource, helper conversionHelper) error {
+func (c *Client) apply(apiObject unversioned.ResourceObject, helper conversionHelper) error {
 	// Validate the supplied data before writing to the datastore.
 	if err := validator.Validate(apiObject); err != nil {
+		return err
+	}
+
+	if err := validator.ValidateMetadataIDsAssigned(apiObject.GetResourceMetadata()); err != nil {
 		return err
 	}
 
@@ -278,6 +295,10 @@ func (c *Client) delete(metadata unversioned.ResourceMetadata, helper conversion
 		return err
 	}
 
+	if err := validator.ValidateMetadataIDsAssigned(metadata); err != nil {
+		return err
+	}
+
 	// Convert the Metadata to a Key and combine with the Metadata revision to create
 	// a KVPair for the delete operation.  At the moment only the WorkloadEndpoint Get
 	// operations fills in the revision information.
@@ -295,6 +316,10 @@ func (c *Client) delete(metadata unversioned.ResourceMetadata, helper conversion
 func (c *Client) get(metadata unversioned.ResourceMetadata, helper conversionHelper) (unversioned.Resource, error) {
 	// Validate the supplied Metadata.
 	if err := validator.Validate(metadata); err != nil {
+		return nil, err
+	}
+
+	if err := validator.ValidateMetadataIDsAssigned(metadata); err != nil {
 		return nil, err
 	}
 

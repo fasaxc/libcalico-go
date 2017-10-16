@@ -19,7 +19,8 @@ import (
 	"reflect"
 	"regexp"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/projectcalico/libcalico-go/lib/errors"
 )
 
@@ -80,7 +81,7 @@ func (key GlobalConfigKey) valueType() reflect.Type {
 }
 
 func (key GlobalConfigKey) String() string {
-	return fmt.Sprintf("GlobalConfig(name=%s)", key.Name)
+	return fmt.Sprintf("GlobalFelixConfig(name=%s)", key.Name)
 }
 
 type GlobalConfigListOptions struct {

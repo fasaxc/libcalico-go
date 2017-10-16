@@ -25,19 +25,22 @@ import (
 type PolicyConverter struct{}
 
 // ConvertMetadataToKey converts a PolicyMetadata to a PolicyKey
-func (p PolicyConverter) ConvertMetadataToKey(m unversioned.ResourceMetadata) model.Key {
+func (p PolicyConverter) ConvertMetadataToKey(m unversioned.ResourceMetadata) (model.Key, error) {
 	pm := m.(api.PolicyMetadata)
 	k := model.PolicyKey{
 		Name: pm.Name,
 	}
-	return k
+	return k, nil
 }
 
 // ConvertAPIToKVPair converts an API Policy structure to a KVPair containing a
 // backend Policy and PolicyKey.
-func (p PolicyConverter) ConvertAPIToKVPair(a unversioned.Resource) *model.KVPair {
+func (p PolicyConverter) ConvertAPIToKVPair(a unversioned.Resource) (*model.KVPair, error) {
 	ap := a.(api.Policy)
-	k := p.ConvertMetadataToKey(ap.Metadata)
+	k, err := p.ConvertMetadataToKey(ap.Metadata)
+	if err != nil {
+		return nil, err
+	}
 
 	d := model.KVPair{
 		Key: k,
@@ -47,25 +50,70 @@ func (p PolicyConverter) ConvertAPIToKVPair(a unversioned.Resource) *model.KVPai
 			OutboundRules: RulesAPIToBackend(ap.Spec.EgressRules),
 			Selector:      ap.Spec.Selector,
 			DoNotTrack:    ap.Spec.DoNotTrack,
+			Annotations:   ap.Metadata.Annotations,
+			PreDNAT:       ap.Spec.PreDNAT,
+			Types:         nil, // filled in below
 		},
 	}
 
-	return &d
+	if len(ap.Spec.Types) == 0 {
+		// Default the Types field according to what inbound and outbound rules are present
+		// in the policy.
+		if len(ap.Spec.EgressRules) == 0 {
+			// Policy has no egress rules, so apply this policy to ingress only.  (Note:
+			// intentionally including the case where the policy also has no ingress
+			// rules.)
+			d.Value.(*model.Policy).Types = []string{string(api.PolicyTypeIngress)}
+		} else if len(ap.Spec.IngressRules) == 0 {
+			// Policy has egress rules but no ingress rules, so apply this policy to
+			// egress only.
+			d.Value.(*model.Policy).Types = []string{string(api.PolicyTypeEgress)}
+		} else {
+			// Policy has both ingress and egress rules, so apply this policy to both
+			// ingress and egress.
+			d.Value.(*model.Policy).Types = []string{string(api.PolicyTypeIngress), string(api.PolicyTypeEgress)}
+		}
+	} else {
+		// Convert from the API-specified Types.
+		d.Value.(*model.Policy).Types = make([]string, len(ap.Spec.Types))
+		for i, t := range ap.Spec.Types {
+			d.Value.(*model.Policy).Types[i] = string(t)
+		}
+	}
+
+	return &d, nil
 }
 
 // ConvertKVPairToAPI converts a KVPair containing a backend Policy and PolicyKey
 // to an API Policy structure.
-func (p PolicyConverter) ConvertKVPairToAPI(d *model.KVPair) unversioned.Resource {
+func (p PolicyConverter) ConvertKVPairToAPI(d *model.KVPair) (unversioned.Resource, error) {
 	bp := d.Value.(*model.Policy)
 	bk := d.Key.(model.PolicyKey)
 
 	ap := api.NewPolicy()
 	ap.Metadata.Name = bk.Name
+	ap.Metadata.Annotations = bp.Annotations
 	ap.Spec.Order = bp.Order
 	ap.Spec.IngressRules = RulesBackendToAPI(bp.InboundRules)
 	ap.Spec.EgressRules = RulesBackendToAPI(bp.OutboundRules)
 	ap.Spec.Selector = bp.Selector
 	ap.Spec.DoNotTrack = bp.DoNotTrack
+	ap.Spec.PreDNAT = bp.PreDNAT
+	ap.Spec.Types = nil
 
-	return ap
+	if len(bp.Types) == 0 {
+		// This case happens when there is a pre-existing policy in an etcd datastore, from
+		// before the explicit Types feature was available.  Calico's previous behaviour was
+		// always to apply policy to both ingress and egress traffic, so in this case we
+		// return Types as [ ingress, egress ].
+		ap.Spec.Types = []api.PolicyType{api.PolicyTypeIngress, api.PolicyTypeEgress}
+	} else {
+		// Convert from the backend-specified Types.
+		ap.Spec.Types = make([]api.PolicyType, len(bp.Types))
+		for i, t := range bp.Types {
+			ap.Spec.Types[i] = api.PolicyType(t)
+		}
+	}
+
+	return ap, nil
 }

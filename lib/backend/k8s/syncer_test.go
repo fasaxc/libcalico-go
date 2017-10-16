@@ -17,17 +17,16 @@ package k8s
 import (
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/projectcalico/libcalico-go/lib/backend/api"
-	"github.com/projectcalico/libcalico-go/lib/backend/k8s/thirdparty"
 	"github.com/projectcalico/libcalico-go/lib/backend/model"
 	"github.com/projectcalico/libcalico-go/lib/net"
+	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	k8sapi "k8s.io/client-go/pkg/api/v1"
-	extensions "k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	extensions "github.com/projectcalico/libcalico-go/lib/backend/extensions"
 )
 
 type testWatch struct {
@@ -110,7 +109,7 @@ func (tc *testClient) NetworkPolicyWatch(opts metav1.ListOptions) (w watch.Inter
 	return
 }
 
-func (tc *testClient) GlobalConfigWatch(opts metav1.ListOptions) (w watch.Interface, err error) {
+func (tc *testClient) GlobalFelixConfigWatch(opts metav1.ListOptions) (w watch.Interface, err error) {
 	w = tc.newWatch("global conf", make(chan watch.Event))
 	err = nil
 	return
@@ -155,7 +154,7 @@ func (tc *testClient) PodList(namespace string, opts metav1.ListOptions) (list *
 	return
 }
 
-func (tc *testClient) GlobalConfigList(l model.GlobalConfigListOptions) ([]*model.KVPair, string, error) {
+func (tc *testClient) GlobalFelixConfigList(l model.GlobalConfigListOptions) ([]*model.KVPair, string, error) {
 	tc.countList()
 	return []*model.KVPair{}, "", nil
 }
@@ -176,13 +175,13 @@ func (tc *testClient) NodeList(opts metav1.ListOptions) (list *k8sapi.NodeList, 
 	err = nil
 	return
 }
-func (tc *testClient) SystemNetworkPolicyWatch(opts metav1.ListOptions) (watch.Interface, error) {
-	return tc.newWatch("system network policy", make(chan watch.Event)), nil
+func (tc *testClient) GlobalNetworkPolicyWatch(opts metav1.ListOptions) (watch.Interface, error) {
+	return tc.newWatch("global network policy", make(chan watch.Event)), nil
 }
 
-func (tc *testClient) SystemNetworkPolicyList() (*thirdparty.SystemNetworkPolicyList, error) {
+func (tc *testClient) GlobalNetworkPolicyList() ([]*model.KVPair, string, error) {
 	tc.countList()
-	return &thirdparty.SystemNetworkPolicyList{}, nil
+	return []*model.KVPair{}, "", nil
 }
 
 func (tc *testClient) getReadyStatus(key model.ReadyFlagKey) (*model.KVPair, error) {
@@ -219,7 +218,7 @@ var _ = Describe("Test Syncer", func() {
 			poolC: make(chan watch.Event),
 			state: map[model.Key]interface{}{},
 		}
-		syn = newSyncer(tc, converter{}, tc, false)
+		syn = newSyncer(tc, Converter{}, tc, false)
 	})
 
 	It("should create a syncer", func() {

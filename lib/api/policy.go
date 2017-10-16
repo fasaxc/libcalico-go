@@ -15,6 +15,8 @@
 package api
 
 import (
+	"fmt"
+
 	"github.com/projectcalico/libcalico-go/lib/api/unversioned"
 )
 
@@ -42,12 +44,25 @@ type Policy struct {
 	Spec     PolicySpec     `json:"spec,omitempty"`
 }
 
+func (t Policy) GetResourceMetadata() unversioned.ResourceMetadata {
+	return t.Metadata
+}
+
+// String() returns the human-readable string representation of a Policy instance
+// which is defined by its Name.
+func (t Policy) String() string {
+	return fmt.Sprintf("Policy(Name=%s)", t.Metadata.Name)
+}
+
 // PolicyMetadata contains the metadata for a selector-based security Policy resource.
 type PolicyMetadata struct {
 	unversioned.ObjectMetadata
 
 	// The name of the selector-based security policy.
 	Name string `json:"name,omitempty" validate:"omitempty,namespacedname"`
+
+	// Arbitrary key-value information to be used by clients.
+	Annotations map[string]string `json:"annotations,omitempty" validate:"omitempty"`
 }
 
 // PolicySpec contains the specification for a selector-based security Policy resource.
@@ -99,7 +114,34 @@ type PolicySpec struct {
 	// this policy are applied before any data plane connection tracking, and packets allowed by
 	// this policy are marked as not to be tracked.
 	DoNotTrack bool `json:"doNotTrack,omitempty"`
+
+	// PreDNAT indicates to apply the rules in this policy before any DNAT.
+	PreDNAT bool `json:"preDNAT,omitempty"`
+
+	// Types indicates whether this policy applies to ingress, or to egress, or to both.  When
+	// not explicitly specified (and so the value on creation is empty or nil), Calico defaults
+	// Types according to what IngressRules and EgressRules are present in the policy.  The
+	// default is:
+	//
+	// - [ PolicyTypeIngress ], if there are no EgressRules (including the case where there are
+	//   also no IngressRules)
+	//
+	// - [ PolicyTypeEgress ], if there are EgressRules but no IngressRules
+	//
+	// - [ PolicyTypeIngress, PolicyTypeEgress ], if there are both IngressRules and EgressRules.
+	//
+	// When the policy is read back again, Types will always be one of these values, never empty
+	// or nil.
+	Types []PolicyType `json:"types,omitempty" validate:"omitempty,dive,policytype"`
 }
+
+// PolicyType enumerates the possible values of the PolicySpec Types field.
+type PolicyType string
+
+const (
+	PolicyTypeIngress PolicyType = "ingress"
+	PolicyTypeEgress  PolicyType = "egress"
+)
 
 // NewPolicy creates a new (zeroed) Policy struct with the TypeMetadata initialised to the current
 // version.

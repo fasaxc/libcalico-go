@@ -15,6 +15,8 @@
 package api
 
 import (
+	"fmt"
+
 	"github.com/projectcalico/libcalico-go/lib/api/unversioned"
 	"github.com/projectcalico/libcalico-go/lib/ipip"
 	"github.com/projectcalico/libcalico-go/lib/net"
@@ -31,6 +33,16 @@ type IPPool struct {
 	unversioned.TypeMetadata
 	Metadata IPPoolMetadata `json:"metadata,omitempty"`
 	Spec     IPPoolSpec     `json:"spec,omitempty"`
+}
+
+func (t IPPool) GetResourceMetadata() unversioned.ResourceMetadata {
+	return t.Metadata
+}
+
+// String() returns the human-readable string representation of an IPPool instance
+// which is defined by its CIDR.
+func (t IPPool) String() string {
+	return fmt.Sprintf("IPPool(CIDR=%s)", t.Metadata.CIDR.String())
 }
 
 // IPPoolMetadata contains the metadata for an IP pool resource.

@@ -20,13 +20,14 @@ import (
 	"regexp"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/projectcalico/libcalico-go/lib/api"
 	"github.com/projectcalico/libcalico-go/lib/errors"
+	calinet "github.com/projectcalico/libcalico-go/lib/net"
 	"github.com/projectcalico/libcalico-go/lib/numorstring"
 	"github.com/projectcalico/libcalico-go/lib/scope"
 	"github.com/projectcalico/libcalico-go/lib/selector"
 	"github.com/projectcalico/libcalico-go/lib/selector/tokenizer"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/projectcalico/libcalico-go/lib/backend/model"
 	"gopkg.in/go-playground/validator.v8"
@@ -99,6 +100,7 @@ func init() {
 	registerFieldValidator("scopeglobalornode", validateScopeGlobalOrNode)
 	registerFieldValidator("ipversion", validateIPVersion)
 	registerFieldValidator("ipipmode", validateIPIPMode)
+	registerFieldValidator("policytype", validatePolicyType)
 
 	// Register struct validators.
 	registerStructValidator(validateProtocol, numorstring.Protocol{})
@@ -111,6 +113,8 @@ func init() {
 	registerStructValidator(validateRule, api.Rule{})
 	registerStructValidator(validateBackendRule, model.Rule{})
 	registerStructValidator(validateNodeSpec, api.NodeSpec{})
+	registerStructValidator(validateBGPPeerMeta, api.BGPPeerMetadata{})
+	registerStructValidator(validatePolicySpec, api.PolicySpec{})
 }
 
 // reason returns the provided error reason prefixed with an identifier that
@@ -213,6 +217,18 @@ func validateScopeGlobalOrNode(v *validator.Validate, topStruct reflect.Value, c
 	f := field.Interface().(scope.Scope)
 	log.Debugf("Validate scope: %v", f)
 	return f == scope.Global || f == scope.Node
+}
+
+func validatePolicyType(v *validator.Validate, topStruct reflect.Value, currentStructOrField reflect.Value, field reflect.Value, fieldType reflect.Type, fieldKind reflect.Kind, param string) bool {
+	s := field.String()
+	log.Debugf("Validate policy type: %s", s)
+	if s == string(api.PolicyTypeIngress) {
+		return true
+	}
+	if s == string(api.PolicyTypeEgress) {
+		return true
+	}
+	return false
 }
 
 func validateProtocol(v *validator.Validate, structLevel *validator.StructLevel) {
@@ -405,25 +421,47 @@ func validateRule(v *validator.Validate, structLevel *validator.StructLevel) {
 		}
 	}
 
-	// Check for mismatch in IP versions
-	if rule.Source.Net != nil && rule.IPVersion != nil {
-		if rule.Source.Net.Version() != *(rule.IPVersion) {
-			structLevel.ReportError(reflect.ValueOf(rule.Source.Net), "Source.Net",
-				"", reason("rule contains an IP version that does not match src CIDR version"))
-		}
+	// Check that only one of the net or nets fields is specified.
+	hasNetField := rule.Source.Net != nil ||
+		rule.Destination.Net != nil ||
+		rule.Source.NotNet != nil ||
+		rule.Destination.NotNet != nil
+	hasNetsField := len(rule.Source.Nets) != 0 ||
+		len(rule.Destination.Nets) != 0 ||
+		len(rule.Source.NotNets) != 0 ||
+		len(rule.Destination.NotNets) != 0
+	if hasNetField && hasNetsField {
+		structLevel.ReportError(reflect.ValueOf(rule.Source.Nets),
+			"Source/Destination.Net/Nets",
+			"Source/Destination.Net/Nets",
+			reason("only one of Net and Nets fields allowed"))
 	}
-	if rule.Destination.Net != nil && rule.IPVersion != nil {
-		if rule.Destination.Net.Version() != *(rule.IPVersion) {
-			structLevel.ReportError(reflect.ValueOf(rule.Destination.Net), "Destination.Net",
-				"", reason("rule contains an IP version that does not match dst CIDR version"))
+
+	var seenV4, seenV6 bool
+
+	scanNets := func(nets []*calinet.IPNet, fieldName string) {
+		var v4, v6 bool
+		for _, n := range nets {
+			v4 = v4 || n.Version() == 4
+			v6 = v6 || n.Version() == 6
 		}
-	}
-	if rule.Source.Net != nil && rule.Destination.Net != nil {
-		if rule.Source.Net.Version() != rule.Destination.Net.Version() {
-			structLevel.ReportError(reflect.ValueOf(rule.Destination.Net), "Destination.Net",
-				"", reason("rule does not support mixing of IPv4/v6 CIDRs"))
+		if rule.IPVersion != nil && ((v4 && *rule.IPVersion != 4) || (v6 && *rule.IPVersion != 6)) {
+			structLevel.ReportError(reflect.ValueOf(rule.Source.Net), fieldName,
+				"", reason("rule IP version doesn't match CIDR version"))
 		}
+		if v4 && seenV6 || v6 && seenV4 || v4 && v6 {
+			// This field makes the rule inconsistent.
+			structLevel.ReportError(reflect.ValueOf(nets), fieldName,
+				"", reason("rule contains both IPv4 and IPv6 CIDRs"))
+		}
+		seenV4 = seenV4 || v4
+		seenV6 = seenV6 || v6
 	}
+
+	scanNets(rule.Source.GetNets(), "Source.Net(s)")
+	scanNets(rule.Source.GetNotNets(), "Source.NotNet(s)")
+	scanNets(rule.Destination.GetNets(), "Destination.Net(s)")
+	scanNets(rule.Destination.GetNotNets(), "Destination.NotNet(s)")
 }
 
 func validateBackendRule(v *validator.Validate, structLevel *validator.StructLevel) {
@@ -469,6 +507,49 @@ func validateNodeSpec(v *validator.Validate, structLevel *validator.StructLevel)
 		if ns.BGP.IPv6Address != nil && ns.BGP.IPv6Address.Version() != 6 {
 			structLevel.ReportError(reflect.ValueOf(ns.BGP.IPv6Address),
 				"BGP.IPv6Address", "", reason("invalid IPv6 address and subnet specified"))
+		}
+	}
+}
+
+func validateBGPPeerMeta(v *validator.Validate, structLevel *validator.StructLevel) {
+	m := structLevel.CurrentStruct.Interface().(api.BGPPeerMetadata)
+
+	if m.Scope == scope.Global && m.Node != "" {
+		structLevel.ReportError(reflect.ValueOf(m.Node),
+			"Metadata.Node", "", reason("no BGP Peer node name should be specified when scope is global"))
+	}
+}
+
+func validatePolicySpec(v *validator.Validate, structLevel *validator.StructLevel) {
+	m := structLevel.CurrentStruct.Interface().(api.PolicySpec)
+
+	if m.DoNotTrack && m.PreDNAT {
+		structLevel.ReportError(reflect.ValueOf(m.PreDNAT),
+			"PolicySpec.PreDNAT", "", reason("PreDNAT and DoNotTrack cannot both be true, for a given PolicySpec"))
+	}
+
+	if m.PreDNAT && len(m.EgressRules) > 0 {
+		structLevel.ReportError(reflect.ValueOf(m.EgressRules),
+			"PolicySpec.EgressRules", "", reason("PreDNAT PolicySpec cannot have any EgressRules"))
+	}
+
+	if m.PreDNAT && len(m.Types) > 0 {
+		for _, t := range m.Types {
+			if t == api.PolicyTypeEgress {
+				structLevel.ReportError(reflect.ValueOf(m.Types),
+					"PolicySpec.Types", "", reason("PreDNAT PolicySpec cannot have 'egress' Type"))
+			}
+		}
+	}
+
+	// Check (and disallow) any repeats in Types field.
+	mp := map[api.PolicyType]bool{}
+	for _, t := range m.Types {
+		if _, exists := mp[t]; exists {
+			structLevel.ReportError(reflect.ValueOf(m.Types),
+				"PolicySpec.Types", "", reason("'"+string(t)+"' type specified more than once"))
+		} else {
+			mp[t] = true
 		}
 	}
 }

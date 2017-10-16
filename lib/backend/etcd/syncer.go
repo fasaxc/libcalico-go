@@ -21,12 +21,12 @@ import (
 
 	"net"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/client"
 	etcd "github.com/coreos/etcd/client"
 	"github.com/projectcalico/libcalico-go/lib/backend/api"
 	"github.com/projectcalico/libcalico-go/lib/backend/model"
 	"github.com/projectcalico/libcalico-go/lib/hwm"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -398,7 +398,7 @@ func (syn *etcdSyncer) pollClusterID(interval time.Duration) {
 	}
 }
 
-// mergeUpdates is a goroutine that processes updates from the snapshot and wathcer threads,
+// mergeUpdates is a goroutine that processes updates from the snapshot and watcher threads,
 // merging them into an eventually-consistent stream of updates.
 //
 // The merging includes resolving deletions where the watcher may be ahead of the snapshot

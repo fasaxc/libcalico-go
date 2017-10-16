@@ -23,8 +23,8 @@ import (
 	net2 "net"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/projectcalico/libcalico-go/lib/net"
+	log "github.com/sirupsen/logrus"
 )
 
 // RawString is used a value type to indicate that the value is a bare non-JSON string
@@ -135,7 +135,7 @@ func KeyToDefaultDeletePath(key Key) (string, error) {
 //
 // For example,
 // 	KeyToDefaultDeletePaths(WorkloadEndpointKey{
-//		Hostname: "h",
+//		Nodename: "h",
 //		OrchestratorID: "o",
 //		WorkloadID: "w",
 //		EndpointID: "e",
@@ -210,7 +210,7 @@ func KeyFromDefaultPath(path string) Key {
 		}
 		return IPPoolKey{CIDR: *c}
 	} else if m := matchGlobalConfig.FindStringSubmatch(path); m != nil {
-		log.Debugf("Path is a global config: %v", path)
+		log.Debugf("Path is a global felix config: %v", path)
 		return GlobalConfigKey{Name: m[1]}
 	} else if m := matchHostConfig.FindStringSubmatch(path); m != nil {
 		log.Debugf("Path is a host config: %v", path)
