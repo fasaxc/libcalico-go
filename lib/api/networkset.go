@@ -84,7 +84,7 @@ type NetworkSetList struct {
 func NewNetworkSetList() *NetworkSetList {
 	return &NetworkSetList{
 		TypeMetadata: unversioned.TypeMetadata{
-			Kind:       "NetworkSetList",
+			Kind:       "networkSetList",
 			APIVersion: unversioned.VersionCurrent,
 		},
 	}

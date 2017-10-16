@@ -74,6 +74,10 @@ func ValidateMetadataIDsAssigned(rm unversioned.ResourceMetadata) error {
 		if metadata.Name == "" {
 			return errors.ErrorInsufficientIdentifiers{Name: "name"}
 		}
+	case api.NetworkSetMetadata:
+		if metadata.Name == "" {
+			return errors.ErrorInsufficientIdentifiers{Name: "name"}
+		}
 	default:
 		log.Fatal(fmt.Errorf("Unexpected resource metadata: %s", metadata))
 	}
