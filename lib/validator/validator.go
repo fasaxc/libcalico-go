@@ -51,6 +51,7 @@ var (
 	poolUnstictCIDR     = "IP pool CIDR is not strictly masked"
 	overlapsV4LinkLocal = "IP pool range overlaps with IPv4 Link Local range 169.254.0.0/16"
 	overlapsV6LinkLocal = "IP pool range overlaps with IPv6 Link Local range fe80::/10"
+	protocolPortsMsg    = "rules that specify ports must set protocol to TCP or UDP"
 
 	ipv4LinkLocalNet = net.IPNet{
 		IP:   net.ParseIP("169.254.0.0"),
@@ -103,18 +104,25 @@ func init() {
 	registerFieldValidator("policytype", validatePolicyType)
 
 	// Register struct validators.
+	// Shared types.
 	registerStructValidator(validateProtocol, numorstring.Protocol{})
 	registerStructValidator(validatePort, numorstring.Port{})
+
+	// Frontend API types.
 	registerStructValidator(validateIPNAT, api.IPNAT{})
 	registerStructValidator(validateWorkloadEndpointSpec, api.WorkloadEndpointSpec{})
 	registerStructValidator(validateHostEndpointSpec, api.HostEndpointSpec{})
 	registerStructValidator(validateIPPool, api.IPPool{})
 	registerStructValidator(validateICMPFields, api.ICMPFields{})
 	registerStructValidator(validateRule, api.Rule{})
-	registerStructValidator(validateBackendRule, model.Rule{})
+	registerStructValidator(validateEndpointPort, api.EndpointPort{})
 	registerStructValidator(validateNodeSpec, api.NodeSpec{})
 	registerStructValidator(validateBGPPeerMeta, api.BGPPeerMetadata{})
 	registerStructValidator(validatePolicySpec, api.PolicySpec{})
+
+	// Backend model types.
+	registerStructValidator(validateBackendRule, model.Rule{})
+	registerStructValidator(validateBackendEndpointPort, model.EndpointPort{})
 }
 
 // reason returns the provided error reason prefixed with an identifier that
@@ -253,14 +261,18 @@ func validatePort(v *validator.Validate, structLevel *validator.StructLevel) {
 
 	// Check that the port range is in the correct order.  The YAML parsing also checks this,
 	// but this protects against misuse of the programmatic API.
-	log.Debugf("Validate port: %s")
+	log.Debugf("Validate port: %v", p)
 	if p.MinPort > p.MaxPort {
 		structLevel.ReportError(reflect.ValueOf(p.MaxPort),
 			"Port", "", reason("port range invalid"))
 	}
 
-	// No need to check for the upperbound (65536) because we use uint16.
-	if p.MinPort < 1 || p.MaxPort < 1 {
+	if p.PortName != "" {
+		if p.MinPort != 0 || p.MaxPort != 0 {
+			structLevel.ReportError(reflect.ValueOf(p.PortName),
+				"Port", "", reason("named port invalid, if name is specified, min and max should be 0"))
+		}
+	} else if p.MinPort < 1 || p.MaxPort < 1 {
 		structLevel.ReportError(reflect.ValueOf(p.MaxPort),
 			"Port", "", reason("port range invalid, port number must be between 0 and 65536"))
 	}
@@ -404,20 +416,20 @@ func validateRule(v *validator.Validate, structLevel *validator.StructLevel) {
 	if rule.Protocol == nil || !rule.Protocol.SupportsPorts() {
 		if len(rule.Source.Ports) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.Source.Ports),
-				"Source.Ports", "", reason("protocol does not support ports"))
+				"Source.Ports", "", reason(protocolPortsMsg))
 		}
 		if len(rule.Source.NotPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.Source.NotPorts),
-				"Source.NotPorts", "", reason("protocol does not support ports"))
+				"Source.NotPorts", "", reason(protocolPortsMsg))
 		}
 
 		if len(rule.Destination.Ports) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.Destination.Ports),
-				"Destination.Ports", "", reason("protocol does not support ports"))
+				"Destination.Ports", "", reason(protocolPortsMsg))
 		}
 		if len(rule.Destination.NotPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.Destination.NotPorts),
-				"Destination.NotPorts", "", reason("protocol does not support ports"))
+				"Destination.NotPorts", "", reason(protocolPortsMsg))
 		}
 	}
 
@@ -472,20 +484,20 @@ func validateBackendRule(v *validator.Validate, structLevel *validator.StructLev
 	if rule.Protocol == nil || !rule.Protocol.SupportsPorts() {
 		if len(rule.SrcPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.SrcPorts),
-				"SrcPorts", "", reason("protocol does not support ports"))
+				"SrcPorts", "", reason(protocolPortsMsg))
 		}
 		if len(rule.NotSrcPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.NotSrcPorts),
-				"NotSrcPorts", "", reason("protocol does not support ports"))
+				"NotSrcPorts", "", reason(protocolPortsMsg))
 		}
 
 		if len(rule.DstPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.DstPorts),
-				"DstPorts", "", reason("protocol does not support ports"))
+				"DstPorts", "", reason(protocolPortsMsg))
 		}
 		if len(rule.NotDstPorts) > 0 {
 			structLevel.ReportError(reflect.ValueOf(rule.NotDstPorts),
-				"NotDstPorts", "", reason("protocol does not support ports"))
+				"NotDstPorts", "", reason(protocolPortsMsg))
 		}
 	}
 }
@@ -520,6 +532,32 @@ func validateBGPPeerMeta(v *validator.Validate, structLevel *validator.StructLev
 	}
 }
 
+func validateBackendEndpointPort(v *validator.Validate, structLevel *validator.StructLevel) {
+	port := structLevel.CurrentStruct.Interface().(model.EndpointPort)
+
+	if port.Protocol.String() != "tcp" && port.Protocol.String() != "udp" {
+		structLevel.ReportError(
+			reflect.ValueOf(port.Protocol),
+			"EndpointPort.Protocol",
+			"",
+			reason("EndpointPort protocol must be 'tcp' or 'udp'."),
+		)
+	}
+}
+
+func validateEndpointPort(v *validator.Validate, structLevel *validator.StructLevel) {
+	port := structLevel.CurrentStruct.Interface().(api.EndpointPort)
+
+	if port.Protocol.String() != "tcp" && port.Protocol.String() != "udp" {
+		structLevel.ReportError(
+			reflect.ValueOf(port.Protocol),
+			"EndpointPort.Protocol",
+			"",
+			reason("EndpointPort protocol must be 'tcp' or 'udp'."),
+		)
+	}
+}
+
 func validatePolicySpec(v *validator.Validate, structLevel *validator.StructLevel) {
 	m := structLevel.CurrentStruct.Interface().(api.PolicySpec)
 
@@ -540,6 +578,11 @@ func validatePolicySpec(v *validator.Validate, structLevel *validator.StructLeve
 					"PolicySpec.Types", "", reason("PreDNAT PolicySpec cannot have 'egress' Type"))
 			}
 		}
+	}
+
+	if !m.ApplyOnForward && (m.DoNotTrack || m.PreDNAT) {
+		structLevel.ReportError(reflect.ValueOf(m.ApplyOnForward),
+			"PolicySpec.ApplyOnForward", "", reason("ApplyOnForward must be true if either PreDNAT or DoNotTrack is true, for a given PolicySpec"))
 	}
 
 	// Check (and disallow) any repeats in Types field.
